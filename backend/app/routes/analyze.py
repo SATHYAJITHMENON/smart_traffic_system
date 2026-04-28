@@ -1,10 +1,10 @@
 from fastapi import APIRouter, File, UploadFile, HTTPException
 from app.services.ai_detector import detector
-from app.models.schemas import TrafficDensity
+from app.models.schemas import AnalyzeImageResponse
 
 router = APIRouter()
 
-@router.post("/analyze-image", response_model=TrafficDensity)
+@router.post("/analyze-image", response_model=AnalyzeImageResponse)
 async def analyze_image_endpoint(file: UploadFile = File(...)):
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File provided is not an image.")

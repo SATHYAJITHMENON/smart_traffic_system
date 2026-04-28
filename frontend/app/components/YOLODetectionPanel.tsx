@@ -3,34 +3,10 @@
 /**
  * YOLODetectionPanel.tsx
  * ──────────────────────
- * Drop-in component that integrates with the Smart Traffic System backend.
- *
- * WHAT IT DOES
- *   • Uploads a camera frame to POST /analyze-image (YOLOv8 inference)
- *   • Displays per-quadrant vehicle counts (North / South / East / West)
- *   • Breaks down each lane by vehicle type: cars / bikes / trucks / buses
- *   • Shows a confidence-weighted "density score" per lane
- *   • Listens to the WebSocket (/ws) for live PHASE_UPDATE / CYCLE_UPDATE events
- *     and merges them into the same UI automatically
- *   • Emits an onData callback so your existing dashboard can consume the data
- *
- * HOW TO INTEGRATE
- *   1. Copy this file into  frontend/app/components/YOLODetectionPanel.tsx
- *   2. Import it anywhere:
- *        import YOLODetectionPanel from '../components/YOLODetectionPanel'
- *   3. Drop the JSX tag into your page / dashboard:
- *        <YOLODetectionPanel
- *          backendUrl="http://localhost:8000"   // optional, defaults to localhost:8000
- *          wsUrl="ws://localhost:8000/ws"        // optional
- *          onData={(lanes) => console.log(lanes)} // optional callback
- *        />
- *   4. The component is self-contained — no extra state or providers needed.
- *
- * PROPS
- *   backendUrl  – REST base URL for the FastAPI backend  (default: http://localhost:8000)
- *   wsUrl       – WebSocket URL                          (default: ws://localhost:8000/ws)
- *   onData      – called every time detection data updates, receives LaneResult[]
- *   className   – extra Tailwind classes on the root div
+ * Shows YOLO detection results including:
+ *   • The annotated image with bounding boxes + confidence scores
+ *   • Per-quadrant vehicle counts (North / South / East / West)
+ *   • A full list of every detected object
  */
 
 import { useEffect, useRef, useState, useCallback } from "react"
@@ -45,12 +21,19 @@ export interface VehicleCounts {
   buses: number
 }
 
+export interface DetectionBox {
+  label: string
+  confidence: number
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
 export interface LaneResult extends VehicleCounts {
   lane: "north" | "south" | "east" | "west"
   total: number
-  /** Weighted density score: trucks/buses count double */
   densityScore: number
-  /** Signal state if available from WebSocket */
   signalState?: "GREEN" | "RED" | "YELLOW"
   greenTime?: number
 }
@@ -66,19 +49,10 @@ export interface YOLODetectionPanelProps {
 
 const DIRECTIONS = ["north", "south", "east", "west"] as const
 
-function computeLaneResult(
-  lane: string,
-  counts: VehicleCounts
-): LaneResult {
+function computeLaneResult(lane: string, counts: VehicleCounts): LaneResult {
   const total = counts.cars + counts.bikes + counts.trucks + counts.buses
-  // Heavier vehicles (trucks/buses) get 2× weight in density
   const densityScore = counts.cars + counts.bikes + counts.trucks * 2 + counts.buses * 2
-  return {
-    lane: lane as LaneResult["lane"],
-    ...counts,
-    total,
-    densityScore,
-  }
+  return { lane: lane as LaneResult["lane"], ...counts, total, densityScore }
 }
 
 function parseAnalyzeResponse(data: Record<string, VehicleCounts>): LaneResult[] {
@@ -90,56 +64,49 @@ function parseAnalyzeResponse(data: Record<string, VehicleCounts>): LaneResult[]
 
 function mergeSignalState(
   lanes: LaneResult[],
-  wsData: {
-    active_lanes?: string[]
-    data?: Array<{ lane: string; green_time?: number }>
-    green_time?: number
-  }
+  wsData: { active_lanes?: string[]; data?: Array<{ lane: string; green_time?: number }>; green_time?: number }
 ): LaneResult[] {
   const activeSet = new Set((wsData.active_lanes ?? []).map((l) => l.toLowerCase()))
-
-  // Build a map of lane → green_time from the data array (CYCLE_UPDATE style)
   const greenMap: Record<string, number> = {}
   if (Array.isArray(wsData.data)) {
     for (const ph of wsData.data) {
       if (ph.lane) greenMap[ph.lane.toLowerCase()] = ph.green_time ?? 0
     }
   }
+  return lanes.map((l) => ({
+    ...l,
+    signalState: activeSet.has(l.lane) ? "GREEN" : "RED",
+    greenTime: activeSet.has(l.lane)
+      ? (wsData.green_time ?? greenMap[l.lane] ?? undefined)
+      : greenMap[l.lane],
+  }))
+}
 
-  return lanes.map((l) => {
-    const isActive = activeSet.has(l.lane)
-    return {
-      ...l,
-      signalState: isActive ? "GREEN" : "RED",
-      greenTime: isActive
-        ? (wsData.green_time ?? greenMap[l.lane] ?? undefined)
-        : greenMap[l.lane],
-    }
-  })
+// ── Colour map ─────────────────────────────────────────────────────────────────
+
+const LABEL_COLORS: Record<string, string> = {
+  car: "bg-amber-400 text-black",
+  bike: "bg-violet-400 text-white",
+  bus: "bg-cyan-400 text-black",
+  truck: "bg-emerald-400 text-black",
+}
+
+const LABEL_BORDER: Record<string, string> = {
+  car: "border-amber-400",
+  bike: "border-violet-400",
+  bus: "border-cyan-400",
+  truck: "border-emerald-400",
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function VehicleBar({
-  label,
-  value,
-  max,
-  color,
-}: {
-  label: string
-  value: number
-  max: number
-  color: string
-}) {
+function VehicleBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="w-12 text-slate-400 shrink-0">{label}</span>
       <div className="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${color}`}
-          style={{ width: `${pct}%` }}
-        />
+        <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
       </div>
       <span className="w-4 text-right text-slate-300 font-mono">{value}</span>
     </div>
@@ -148,34 +115,19 @@ function VehicleBar({
 
 function SignalDot({ state }: { state?: "GREEN" | "RED" | "YELLOW" }) {
   if (!state) return null
-  const colors: Record<string, string> = {
-    GREEN: "bg-emerald-400",
-    RED: "bg-red-500",
-    YELLOW: "bg-yellow-400",
-  }
-  return (
-    <span className={`inline-block w-2.5 h-2.5 rounded-full ${colors[state]}`} />
-  )
+  const colors: Record<string, string> = { GREEN: "bg-emerald-400", RED: "bg-red-500", YELLOW: "bg-yellow-400" }
+  return <span className={`inline-block w-2.5 h-2.5 rounded-full ${colors[state]}`} />
 }
 
 function LaneCard({ lane }: { lane: LaneResult }) {
   const maxVehicles = Math.max(lane.cars, lane.bikes, lane.trucks, lane.buses, 1)
-  const directionLabel = lane.lane.charAt(0).toUpperCase() + lane.lane.slice(1)
-
-  const directionArrow: Record<string, string> = {
-    north: "↑",
-    south: "↓",
-    east: "→",
-    west: "←",
-  }
-
+  const arrow: Record<string, string> = { north: "↑", south: "↓", east: "→", west: "←" }
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-col gap-3">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-slate-400 text-lg">{directionArrow[lane.lane]}</span>
-          <span className="font-bold text-white text-sm">{directionLabel}</span>
+          <span className="text-slate-400 text-lg">{arrow[lane.lane]}</span>
+          <span className="font-bold text-white text-sm capitalize">{lane.lane}</span>
           <SignalDot state={lane.signalState} />
         </div>
         <div className="text-right">
@@ -183,8 +135,6 @@ function LaneCard({ lane }: { lane: LaneResult }) {
           <div className="text-xs text-slate-500">vehicles</div>
         </div>
       </div>
-
-      {/* Density bar */}
       <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
         <div
           className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-700"
@@ -193,17 +143,79 @@ function LaneCard({ lane }: { lane: LaneResult }) {
       </div>
       <div className="text-xs text-slate-500 -mt-2">
         Density score: {lane.densityScore}
-        {lane.greenTime != null && (
-          <span className="ml-2 text-emerald-400/80">· {lane.greenTime}s green</span>
-        )}
+        {lane.greenTime != null && <span className="ml-2 text-emerald-400/80">· {lane.greenTime}s green</span>}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <VehicleBar label="Cars" value={lane.cars} max={maxVehicles} color="bg-amber-400" />
+        <VehicleBar label="Bikes" value={lane.bikes} max={maxVehicles} color="bg-violet-400" />
+        <VehicleBar label="Trucks" value={lane.trucks} max={maxVehicles} color="bg-emerald-400" />
+        <VehicleBar label="Buses" value={lane.buses} max={maxVehicles} color="bg-cyan-400" />
+      </div>
+    </div>
+  )
+}
+
+function DetectionList({ detections }: { detections: DetectionBox[] }) {
+  if (detections.length === 0) return null
+
+  // Sort by confidence desc
+  const sorted = [...detections].sort((a, b) => b.confidence - a.confidence)
+
+  // Count per label
+  const counts = sorted.reduce<Record<string, number>>((acc, d) => {
+    acc[d.label] = (acc[d.label] ?? 0) + 1
+    return acc
+  }, {})
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Summary chips */}
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(counts).map(([label, count]) => (
+          <span
+            key={label}
+            className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${LABEL_COLORS[label] ?? "bg-slate-600 text-white"}`}
+          >
+            {count} {label}{count !== 1 ? "s" : ""}
+          </span>
+        ))}
+        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-700 text-slate-300">
+          {detections.length} total
+        </span>
       </div>
 
-      {/* Per-type breakdown */}
-      <div className="flex flex-col gap-1.5">
-        <VehicleBar label="Cars" value={lane.cars} max={maxVehicles} color="bg-blue-400" />
-        <VehicleBar label="Bikes" value={lane.bikes} max={maxVehicles} color="bg-violet-400" />
-        <VehicleBar label="Trucks" value={lane.trucks} max={maxVehicles} color="bg-orange-400" />
-        <VehicleBar label="Buses" value={lane.buses} max={maxVehicles} color="bg-rose-400" />
+      {/* Per-detection rows */}
+      <div className="max-h-56 overflow-y-auto flex flex-col gap-1 pr-1">
+        {sorted.map((det, i) => (
+          <div
+            key={i}
+            className={`flex items-center gap-3 bg-slate-800/70 border ${LABEL_BORDER[det.label] ?? "border-slate-600"} rounded-lg px-3 py-1.5`}
+          >
+            {/* Colour dot */}
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${det.label === "car" ? "bg-amber-400" :
+                  det.label === "bike" ? "bg-violet-400" :
+                    det.label === "bus" ? "bg-cyan-400" :
+                      det.label === "truck" ? "bg-emerald-400" : "bg-slate-500"
+                }`}
+            />
+            {/* Label */}
+            <span className="text-xs font-semibold text-white capitalize w-10 shrink-0">{det.label}</span>
+            {/* Confidence bar */}
+            <div className="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden">
+              <div
+                className={`h-full rounded-full ${det.confidence >= 0.8 ? "bg-emerald-400" :
+                    det.confidence >= 0.5 ? "bg-yellow-400" : "bg-orange-400"
+                  }`}
+                style={{ width: `${Math.round(det.confidence * 100)}%` }}
+              />
+            </div>
+            {/* Confidence value */}
+            <span className="text-xs font-mono text-slate-300 w-9 text-right shrink-0">
+              {Math.round(det.confidence * 100)}%
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -218,13 +230,14 @@ export default function YOLODetectionPanel({
   className = "",
 }: YOLODetectionPanelProps) {
   const [lanes, setLanes] = useState<LaneResult[]>([])
+  const [detections, setDetections] = useState<DetectionBox[]>([])
+  const [annotatedImg, setAnnotatedImg] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
   const [wsConnected, setWsConnected] = useState(false)
   const [emergency, setEmergency] = useState<string | null>(null)
 
-  // Keep a ref to the latest lanes so the WebSocket handler can merge without stale closure
   const lanesRef = useRef<LaneResult[]>([])
   lanesRef.current = lanes
 
@@ -237,57 +250,32 @@ export default function YOLODetectionPanel({
     const connect = () => {
       if (destroyed) return
       ws = new WebSocket(wsUrl)
-
-      ws.onopen = () => {
-        setWsConnected(true)
-        retryDelay = 1000
-      }
-
+      ws.onopen = () => { setWsConnected(true); retryDelay = 1000 }
       ws.onclose = () => {
         setWsConnected(false)
-        if (!destroyed) {
-          setTimeout(connect, retryDelay)
-          retryDelay = Math.min(retryDelay * 2, 30_000)
-        }
+        if (!destroyed) { setTimeout(connect, retryDelay); retryDelay = Math.min(retryDelay * 2, 30_000) }
       }
-
       ws.onerror = () => ws.close()
-
       ws.onmessage = (evt) => {
         try {
           const msg = JSON.parse(evt.data)
-
-          if (msg.type === "EMERGENCY_OVERRIDE") {
-            setEmergency(msg.message ?? `Emergency on ${msg.lane}`)
-          } else if (msg.type === "EMERGENCY_CLEARED") {
-            setEmergency(null)
-          }
-
-          // Merge signal states into existing lane cards (if we have detection data)
+          if (msg.type === "EMERGENCY_OVERRIDE") setEmergency(msg.message ?? `Emergency on ${msg.lane}`)
+          else if (msg.type === "EMERGENCY_CLEARED") setEmergency(null)
           if (
             (msg.type === "PHASE_UPDATE" || msg.type === "CYCLE_UPDATE" || msg.type === "EMERGENCY_OVERRIDE") &&
             lanesRef.current.length > 0
           ) {
-            setLanes((prev) => {
-              const merged = mergeSignalState(prev, msg)
-              onData?.(merged)
-              return merged
-            })
+            setLanes((prev) => { const merged = mergeSignalState(prev, msg); onData?.(merged); return merged })
           }
-        } catch {
-          // ignore malformed messages
-        }
+        } catch { /* ignore malformed */ }
       }
     }
 
     connect()
-    return () => {
-      destroyed = true
-      ws?.close()
-    }
+    return () => { destroyed = true; ws?.close() }
   }, [wsUrl, onData])
 
-  // ── Image upload → YOLO inference ─────────────────────────────────────────
+  // ── Upload handler ─────────────────────────────────────────────────────────
   const handleUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
@@ -296,24 +284,28 @@ export default function YOLODetectionPanel({
       setFileName(file.name)
       setError(null)
       setAnalyzing(true)
+      setAnnotatedImg(null)
+      setDetections([])
 
       const form = new FormData()
       form.append("file", file)
 
       try {
-        const res = await axios.post<Record<string, VehicleCounts>>(
-          `${backendUrl}/analyze-image`,
-          form
-        )
-        const parsed = parseAnalyzeResponse(res.data)
+        const res = await axios.post<{
+          north: VehicleCounts; south: VehicleCounts; east: VehicleCounts; west: VehicleCounts
+          annotated_image?: string
+          detections?: DetectionBox[]
+        }>(`${backendUrl}/analyze-image`, form)
+
+        const parsed = parseAnalyzeResponse(res.data as any)
         setLanes(parsed)
         lanesRef.current = parsed
         onData?.(parsed)
+
+        if (res.data.annotated_image) setAnnotatedImg(res.data.annotated_image)
+        if (res.data.detections) setDetections(res.data.detections)
       } catch (err: any) {
-        const msg =
-          err?.response?.data?.detail ??
-          err?.message ??
-          "Failed to contact backend."
+        const msg = err?.response?.data?.detail ?? err?.message ?? "Failed to contact backend."
         setError(msg)
       } finally {
         setAnalyzing(false)
@@ -322,44 +314,44 @@ export default function YOLODetectionPanel({
     [backendUrl, onData]
   )
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Derived values ─────────────────────────────────────────────────────────
   const totalVehicles = lanes.reduce((s, l) => s + l.total, 0)
   const busiestLane = lanes.reduce<LaneResult | null>(
     (best, l) => (!best || l.densityScore > best.densityScore ? l : best),
     null
   )
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className={`flex flex-col gap-6 ${className}`}>
-      {/* Header row */}
+
+      {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="text-xl font-bold text-white">YOLO Vehicle Detection</h2>
-          <p className="text-xs text-slate-500 mt-0.5">YOLOv8n · quadrant analysis · 4 vehicle types</p>
+          <p className="text-xs text-slate-500 mt-0.5">YOLOv8n · quadrant analysis · bounding boxes + confidence</p>
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className={`flex items-center gap-1 ${wsConnected ? "text-emerald-400" : "text-slate-500"}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-emerald-400" : "bg-slate-600"}`} />
             {wsConnected ? "WS live" : "WS offline"}
           </span>
-          {totalVehicles > 0 && (
-            <span className="text-slate-400">{totalVehicles} total detected</span>
-          )}
+          {totalVehicles > 0 && <span className="text-slate-400">{totalVehicles} total detected</span>}
         </div>
       </div>
 
-      {/* Emergency banner */}
+      {/* ── Emergency banner ── */}
       {emergency && (
         <div className="px-4 py-2 bg-red-500/20 border border-red-500/50 rounded-lg text-red-400 text-sm font-semibold">
           ⚠️ {emergency}
         </div>
       )}
 
-      {/* Upload zone */}
+      {/* ── Upload zone ── */}
       <label className="block cursor-pointer border-2 border-dashed border-slate-600 hover:border-emerald-500/60 bg-slate-800/50 rounded-xl px-6 py-5 text-center transition-all">
         <div className="text-slate-300 font-medium text-sm">
           {analyzing ? (
-            <span className="text-emerald-400">Analyzing frame with YOLOv8…</span>
+            <span className="text-emerald-400">Analyzing with YOLOv8… detecting vehicles…</span>
           ) : (
             <>
               <span className="text-emerald-400 font-semibold">Upload camera frame</span>
@@ -367,26 +359,48 @@ export default function YOLODetectionPanel({
             </>
           )}
         </div>
-        {fileName && !analyzing && (
-          <p className="text-xs text-slate-500 mt-1">{fileName}</p>
-        )}
-        <input
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleUpload}
-          disabled={analyzing}
-        />
+        {fileName && !analyzing && <p className="text-xs text-slate-500 mt-1">{fileName}</p>}
+        <input type="file" accept="image/*" className="hidden" onChange={handleUpload} disabled={analyzing} />
       </label>
 
-      {/* Error */}
+      {/* ── Error ── */}
       {error && (
         <div className="text-red-400 text-sm bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2">
           {error}
         </div>
       )}
 
-      {/* Summary strip */}
+      {/* ── Annotated image ── */}
+      {annotatedImg && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-slate-300">Detection Output</h3>
+          <div className="rounded-xl overflow-hidden border border-slate-700">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`data:image/jpeg;base64,${annotatedImg}`}
+              alt="YOLO annotated detection"
+              className="w-full object-contain"
+            />
+          </div>
+          <p className="text-xs text-slate-500">
+            Bounding boxes drawn by the backend · colours:
+            <span className="text-amber-400 ml-1">car</span>
+            <span className="text-violet-400 ml-2">bike</span>
+            <span className="text-cyan-400 ml-2">bus</span>
+            <span className="text-emerald-400 ml-2">truck</span>
+          </p>
+        </div>
+      )}
+
+      {/* ── Detection list ── */}
+      {detections.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-slate-300">All Detections</h3>
+          <DetectionList detections={detections} />
+        </div>
+      )}
+
+      {/* ── Busiest lane summary ── */}
       {busiestLane && (
         <div className="flex items-center gap-2 text-sm text-slate-400">
           <span className="text-white font-semibold capitalize">{busiestLane.lane}</span>
@@ -395,18 +409,16 @@ export default function YOLODetectionPanel({
         </div>
       )}
 
-      {/* Lane cards grid */}
+      {/* ── Lane cards grid ── */}
       {lanes.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {lanes.map((l) => (
-            <LaneCard key={l.lane} lane={l} />
-          ))}
+          {lanes.map((l) => <LaneCard key={l.lane} lane={l} />)}
         </div>
-      ) : (
+      ) : !annotatedImg ? (
         <div className="h-48 flex items-center justify-center border border-dashed border-slate-700 rounded-xl text-slate-600 text-sm">
           Upload an image to see detection output
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
