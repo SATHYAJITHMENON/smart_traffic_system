@@ -1,6 +1,7 @@
 from fastapi import APIRouter, File, UploadFile, HTTPException
 from app.services.ai_detector import detector
 from app.models.schemas import AnalyzeImageResponse
+import traceback
 
 router = APIRouter()
 
@@ -14,4 +15,5 @@ async def analyze_image_endpoint(file: UploadFile = File(...)):
         lane_data = await detector.analyze_image(contents)
         return lane_data
     except Exception as e:
+        traceback.print_exc()   # 🔥 THIS IS KEY
         raise HTTPException(status_code=500, detail=str(e))

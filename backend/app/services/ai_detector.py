@@ -17,10 +17,8 @@ next_id = 1
 # COCO vehicle classes
 VEHICLE_CLASSES = {"car", "motorcycle", "bus", "truck"}
 
-# normalize labels
 LABEL_MAP = {"motorcycle": "bike"}
 
-# colors
 BOX_COLORS = {
     "car":   (255, 200,  50),
     "bike":  (180,  80, 255),
@@ -64,14 +62,11 @@ def _draw_boxes(image: np.ndarray, detections: list) -> np.ndarray:
         )
 
     return out
-
-
-# ── 🔥 TRACKING (NO DUPLICATES) ─────────────────────────────
-
 def _track_objects(detections):
     global tracker_memory, next_id
 
     updated = []
+    new_memory = {}
 
     for det in detections:
         x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
@@ -80,22 +75,27 @@ def _track_objects(detections):
         cy = (y1 + y2) / 2
 
         assigned_id = None
+        min_dist = float("inf")
 
         for tid, (tx, ty) in tracker_memory.items():
             dist = ((cx - tx) ** 2 + (cy - ty) ** 2) ** 0.5
 
-            if dist < 50:
+            if dist < 35 and dist < min_dist:
                 assigned_id = tid
-                break
+                min_dist = dist
 
         if assigned_id is None:
             assigned_id = next_id
             next_id += 1
 
-        tracker_memory[assigned_id] = (cx, cy)
+        new_memory[assigned_id] = (cx, cy)
 
         det["track_id"] = assigned_id
         updated.append(det)
+
+    # 🔥 RESET MEMORY EACH FRAME (VERY IMPORTANT)
+    tracker_memory.clear()
+    tracker_memory.update(new_memory)
 
     return updated
 class AIDetector:
@@ -106,26 +106,17 @@ class AIDetector:
         if self._model:
             return self._model
 
-        try:
-            from ultralytics import YOLO
+        from ultralytics import YOLO
 
-            # 🔥 Use upgraded model (fallback safe)
-            model_name = getattr(settings, "YOLO_MODEL", "yolov8m.pt")
+        model_name = "yolov8l.pt"  # 🔥 HIGH ACCURACY
 
-            self._model = YOLO(model_name)
+        self._model = YOLO(model_name)
 
-            logger.info(f"YOLO model loaded: {model_name}")
-
-        except Exception as e:
-            logger.error("YOLO load failed: %s", e)
-            raise RuntimeError("YOLO model loading failed") from e
-
+        logger.info(f"YOLO model loaded: {model_name}")
         return self._model
-
     async def analyze_image(self, image_bytes: bytes):
         model = self._get_model()
 
-        # ── Decode image ─────────────────────────
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
@@ -134,8 +125,15 @@ class AIDetector:
 
         height, width = img.shape[:2]
 
-        # ── YOLO INFERENCE ───────────────────────
-        results = model(img, conf=CONF_THRESHOLD)
+        # 🔥 BETTER YOLO SETTINGS
+        results = model.predict(
+            source=img,
+            conf=0.35,
+            iou=0.5,
+            imgsz=640,
+            device=0,
+            verbose=False
+        )
 
         detections = []
 
@@ -149,7 +147,6 @@ class AIDetector:
 
                 conf = float(box.conf[0])
 
-                # 🔥 Confidence filter
                 if conf < CONF_THRESHOLD:
                     continue
 
@@ -166,10 +163,9 @@ class AIDetector:
                     "y2": y2
                 })
 
-        # ── 🔥 TRACKING ─────────────────────────
+        # 🔥 TRACKING
         tracked = _track_objects(detections)
 
-        # ── PREPARE FOR LANE MAPPING ────────────
         boxes_data = []
 
         for det in tracked:
@@ -180,20 +176,16 @@ class AIDetector:
 
             boxes_data.append((cx, cy, bw, bh, det["label"]))
 
-        # ── LANE MAPPING ────────────────────────
         lanes_data = map_to_lanes(boxes_data, width, height)
 
-        # ── DRAW BOXES ──────────────────────────
         annotated = _draw_boxes(img, tracked)
 
-        # ── ENCODE IMAGE ────────────────────────
         success, buf = cv2.imencode(".jpg", annotated)
         if not success:
             raise RuntimeError("Image encoding failed")
 
         annotated_b64 = base64.b64encode(buf.tobytes()).decode("utf-8")
 
-        # ── FINAL RESPONSE ──────────────────────
         lanes_data.update({
             "annotated_image": annotated_b64,
             "detections": tracked,
@@ -202,7 +194,5 @@ class AIDetector:
         })
 
         return lanes_data
-
-
-# 🔥 CRITICAL FIX (this was missing → caused your error)
+# 🔥 CRITICAL FIX (this was missing)
 detector = AIDetector()
