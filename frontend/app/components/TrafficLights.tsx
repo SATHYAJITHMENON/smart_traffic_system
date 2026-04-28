@@ -7,10 +7,10 @@ type Props = {
 }
 
 const LANE_COLORS: Record<Lane, string> = {
-    north: "#1D9E75",
-    south: "#378ADD",
-    east: "#BA7517",
-    west: "#D4537E",
+    north: "#34d399",
+    south: "#60a5fa",
+    east: "#f59e0b",
+    west: "#a78bfa",
 }
 
 const LANE_LABELS: Record<Lane, string> = {
@@ -24,55 +24,36 @@ export default function TrafficLights({ activeLane }: Props) {
     const lanes: Lane[] = ["north", "south", "east", "west"]
 
     return (
-        <div className="flex gap-3 justify-center flex-wrap">
+        <div style={S.row}>
             {lanes.map(lane => {
                 const isGreen = lane === activeLane
+                const color = LANE_COLORS[lane]
                 return (
-                    <div
-                        key={lane}
-                        className="flex flex-col items-center gap-1"
-                    >
-                        {/* Signal housing */}
-                        <div
-                            className="flex flex-col items-center gap-1.5 rounded-lg px-2 py-2"
-                            style={{ background: "#111", border: "1px solid #333" }}
-                        >
-                            {/* Red bulb */}
-                            <div
-                                className="rounded-full transition-all duration-300"
-                                style={{
-                                    width: 16,
-                                    height: 16,
-                                    background: isGreen ? "#3d1212" : "#ef4444",
-                                    boxShadow: !isGreen ? "0 0 8px 2px rgba(239,68,68,0.7)" : "none",
-                                }}
-                            />
-                            {/* Amber (always off in this simplified model) */}
-                            <div
-                                className="rounded-full"
-                                style={{
-                                    width: 16,
-                                    height: 16,
-                                    background: "#1a1000",
-                                }}
-                            />
-                            {/* Green bulb */}
-                            <div
-                                className="rounded-full transition-all duration-300"
-                                style={{
-                                    width: 16,
-                                    height: 16,
-                                    background: isGreen ? "#22c55e" : "#122a16",
-                                    boxShadow: isGreen ? "0 0 8px 2px rgba(34,197,94,0.7)" : "none",
-                                }}
-                            />
+                    <div key={lane} style={S.unit}>
+                        {/* Housing */}
+                        <div style={S.housing}>
+                            {/* Red */}
+                            <div style={{
+                                ...S.bulb,
+                                background: isGreen ? "#1a0505" : "#ef4444",
+                                boxShadow: !isGreen ? "0 0 7px 2px rgba(239,68,68,0.6)" : "none",
+                            }} />
+                            {/* Amber — always off */}
+                            <div style={{ ...S.bulb, background: "#12100a" }} />
+                            {/* Green */}
+                            <div style={{
+                                ...S.bulb,
+                                background: isGreen ? "#22c55e" : "#0a1a0c",
+                                boxShadow: isGreen ? `0 0 8px 3px rgba(34,197,94,0.65)` : "none",
+                            }} />
                         </div>
 
-                        {/* Lane label */}
-                        <span
-                            className="text-xs font-bold transition-colors duration-300"
-                            style={{ color: isGreen ? LANE_COLORS[lane] : "#4b5563" }}
-                        >
+                        {/* Label */}
+                        <span style={{
+                            ...S.label,
+                            color: isGreen ? color : "#1f2937",
+                            ...(isGreen ? { textShadow: `0 0 8px ${color}99` } : {}),
+                        }}>
                             {LANE_LABELS[lane]}
                         </span>
                     </div>
@@ -80,4 +61,42 @@ export default function TrafficLights({ activeLane }: Props) {
             })}
         </div>
     )
+}
+
+const S: Record<string, React.CSSProperties> = {
+    row: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+    },
+    unit: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 4,
+    },
+    housing: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 3,
+        background: "#0a0a0a",
+        border: "1px solid #1a1a1a",
+        borderRadius: 6,
+        padding: "5px 4px",
+    },
+    bulb: {
+        width: 10,
+        height: 10,
+        borderRadius: "50%",
+        transition: "all 0.25s ease",
+        flexShrink: 0,
+    },
+    label: {
+        fontSize: 9,
+        fontWeight: 800,
+        letterSpacing: "0.06em",
+        transition: "color 0.25s ease, text-shadow 0.25s ease",
+        lineHeight: 1,
+    },
 }
