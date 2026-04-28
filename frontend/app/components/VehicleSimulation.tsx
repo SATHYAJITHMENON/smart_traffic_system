@@ -254,143 +254,129 @@ export default function VehicleSimulation({ cycle, emergencyLane = null, onSimul
     const draw = useCallback(() => {
         const canvas = canvasRef.current; if (!canvas) return
         const ctx = canvas.getContext("2d"); if (!ctx) return
-        const dark = window.matchMedia("(prefers-color-scheme: dark)").matches
+
         const vehicles = vehiclesRef.current
         const emergency = emergencyLaneRef.current
-
-        let avgX = CX, avgY = CY
-        if (vehicles.length > 0) {
-            avgX = vehicles.reduce((s, v) => s + v.x, 0) / vehicles.length
-            avgY = vehicles.reduce((s, v) => s + v.y, 0) / vehicles.length
-        }
-        let maxDist = 0
-        const INF = 2000
-        for (const v of vehicles) maxDist = Math.max(maxDist, Math.abs(v.x - smoothCamXRef.current), Math.abs(v.y - smoothCamYRef.current))
-        const targetScale = maxDist > 350 ? 0.55 : maxDist > 200 ? 0.75 : 1
-        smoothScaleRef.current += (targetScale - smoothScaleRef.current) * 0.05
-        smoothCamXRef.current += (avgX - smoothCamXRef.current) * 0.04
-        smoothCamYRef.current += (avgY - smoothCamYRef.current) * 0.04
-
-        // Determine the visually active lane:
-        // During emergency the priority lane is "green", all others red.
         const active = emergency ?? activeLaneRef.current
 
         ctx.clearRect(0, 0, W, H)
-        ctx.save()
-        ctx.translate(CX, CY)
-        ctx.scale(smoothScaleRef.current, smoothScaleRef.current)
-        ctx.translate(-smoothCamXRef.current, -smoothCamYRef.current)
 
-        // ── Road surface ────────────────────────────────────────────────────
-        ctx.fillStyle = dark ? "#0d1117" : "#e8e6df"; ctx.fillRect(CX - INF, CY - INF, INF * 2, INF * 2)
-        ctx.fillStyle = dark ? "#21272e" : "#2c2c2a"
-        ctx.fillRect(CX - INF, CY - RH, INF * 2, RH * 2)
-        ctx.fillRect(CX - RH, CY - INF, RH * 2, INF * 2)
-        ctx.fillStyle = dark ? "#2a3140" : "#3d3d3a"; ctx.fillRect(CX - RH, CY - RH, RH * 2, RH * 2)
+        // ───────────── 🛣️ ROAD ─────────────
+        const roadGrad = ctx.createLinearGradient(0, CY - RH, 0, CY + RH)
+        roadGrad.addColorStop(0, "#1e293b")
+        roadGrad.addColorStop(1, "#111827")
 
-        // Lane markings
-        ctx.strokeStyle = "rgba(100,200,255,0.12)"; ctx.lineWidth = 1; ctx.setLineDash([8, 10])
-        for (const off of [-LANE_OFFSET, LANE_OFFSET]) {
-            ctx.beginPath(); ctx.moveTo(CX + off, CY - INF); ctx.lineTo(CX + off, CY - RH); ctx.stroke()
-            ctx.beginPath(); ctx.moveTo(CX + off, CY + RH); ctx.lineTo(CX + off, CY + INF); ctx.stroke()
-            ctx.beginPath(); ctx.moveTo(CX - INF, CY + off); ctx.lineTo(CX - RH, CY + off); ctx.stroke()
-            ctx.beginPath(); ctx.moveTo(CX + RH, CY + off); ctx.lineTo(CX + INF, CY + off); ctx.stroke()
+        ctx.fillStyle = roadGrad
+        ctx.fillRect(0, CY - RH, W, RH * 2)
+        ctx.fillRect(CX - RH, 0, RH * 2, H)
+
+        // Intersection highlight
+        ctx.fillStyle = "rgba(255,255,255,0.05)"
+        ctx.fillRect(CX - RH, CY - RH, RH * 2, RH * 2)
+
+        // Zebra crossing
+        ctx.fillStyle = "rgba(255,255,255,0.12)"
+        for (let i = -3; i <= 3; i++) {
+            ctx.fillRect(CX - RH - 10, CY + i * 6, 8, 2)
+            ctx.fillRect(CX + RH + 2, CY + i * 6, 8, 2)
+            ctx.fillRect(CX + i * 6, CY - RH - 10, 2, 8)
+            ctx.fillRect(CX + i * 6, CY + RH + 2, 2, 8)
         }
-        ctx.setLineDash([])
-        ctx.strokeStyle = "rgba(100,200,255,0.28)"; ctx.lineWidth = 2; ctx.setLineDash([18, 14])
-        ctx.beginPath(); ctx.moveTo(CX - INF, CY); ctx.lineTo(CX - RH - 2, CY); ctx.stroke()
-        ctx.beginPath(); ctx.moveTo(CX + RH + 2, CY); ctx.lineTo(CX + INF, CY); ctx.stroke()
-        ctx.beginPath(); ctx.moveTo(CX, CY - INF); ctx.lineTo(CX, CY - RH - 2); ctx.stroke()
-        ctx.beginPath(); ctx.moveTo(CX, CY + RH + 2); ctx.lineTo(CX, CY + INF); ctx.stroke()
-        ctx.setLineDash([])
 
-        // ── Emergency road overlay — red tint on priority lane ──────────────
-        if (emergency) {
+        // ───────────── 🟢 ACTIVE LANE GLOW ─────────────
+        if (active) {
             ctx.save()
-            ctx.globalAlpha = 0.13
-            ctx.fillStyle = "#ef4444"
-            if (emergency === "north" || emergency === "south") {
-                ctx.fillRect(CX - RH, CY - INF, RH * 2, INF * 2)
+            ctx.globalAlpha = 0.08
+            ctx.fillStyle = "#22c55e"
+
+            if (active === "north" || active === "south") {
+                ctx.fillRect(CX - RH, 0, RH * 2, H)
             } else {
-                ctx.fillRect(CX - INF, CY - RH, INF * 2, RH * 2)
+                ctx.fillRect(0, CY - RH, W, RH * 2)
             }
+
             ctx.restore()
         }
 
-        // ── Stop lines ──────────────────────────────────────────────────────
-        ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 2
-        for (const lane of ["north", "south", "east", "west"] as Lane[]) {
-            if (lane === active) continue
+        // ───────────── 🚨 EMERGENCY OVERLAY ─────────────
+        if (emergency) {
+            ctx.save()
+            ctx.globalAlpha = 0.12
+            ctx.fillStyle = "#ef4444"
+
+            if (emergency === "north" || emergency === "south") {
+                ctx.fillRect(CX - RH, 0, RH * 2, H)
+            } else {
+                ctx.fillRect(0, CY - RH, W, RH * 2)
+            }
+
+            ctx.restore()
+        }
+
+        // ───────────── 🚦 TRAFFIC LIGHTS ─────────────
+        const lights = [
+            { lane: "north", x: CX - 20, y: CY - RH - 15 },
+            { lane: "south", x: CX + 10, y: CY + RH + 5 },
+            { lane: "east", x: CX + RH + 5, y: CY - 20 },
+            { lane: "west", x: CX - RH - 15, y: CY + 10 },
+        ] as const
+
+        lights.forEach(l => {
+            ctx.fillStyle = "#111827"
+            roundRect(ctx, l.x, l.y, 12, 28, 3)
+            ctx.fill()
+
             ctx.beginPath()
-            if (lane === "north") { ctx.moveTo(CX - RH, CY - RH - 3); ctx.lineTo(CX, CY - RH - 3) }
-            if (lane === "south") { ctx.moveTo(CX, CY + RH + 3); ctx.lineTo(CX + RH, CY + RH + 3) }
-            if (lane === "east") { ctx.moveTo(CX + RH + 3, CY - RH); ctx.lineTo(CX + RH + 3, CY) }
-            if (lane === "west") { ctx.moveTo(CX - RH - 3, CY); ctx.lineTo(CX - RH - 3, CY + RH) }
-            ctx.stroke()
-        }
+            ctx.arc(l.x + 6, l.y + 8, 3.5, 0, Math.PI * 2)
+            ctx.fillStyle = l.lane === active ? "#22c55e" : "#ef4444"
+            ctx.fill()
+        })
 
-        // ── Traffic lights ──────────────────────────────────────────────────
-        const corners: Record<Lane, { x: number; y: number }> = {
-            north: { x: CX - RH - 14, y: CY - RH - 16 },
-            south: { x: CX + 4, y: CY + RH + 4 },
-            east: { x: CX + RH + 4, y: CY - RH - 16 },
-            west: { x: CX - RH - 14, y: CY + 4 },
-        }
-        for (const [lane, pos] of Object.entries(corners) as [Lane, { x: number; y: number }][]) {
-            const isGreen = lane === active
-            ctx.fillStyle = dark ? "#1a1a2e" : "#111"; roundRect(ctx, pos.x - 2, pos.y - 2, 14, 30, 3); ctx.fill()
-            ctx.beginPath(); ctx.arc(pos.x + 5, pos.y + 5, 4, 0, Math.PI * 2)
-            ctx.fillStyle = isGreen ? "#3d1212" : "#ef4444"; ctx.fill()
-            ctx.beginPath(); ctx.arc(pos.x + 5, pos.y + 20, 4, 0, Math.PI * 2)
-            ctx.fillStyle = isGreen ? "#22c55e" : "#122a16"; ctx.fill()
-        }
-
-        // Compass labels
-        ctx.font = "500 11px sans-serif"; ctx.fillStyle = dark ? "#666" : "#888"
-        ctx.textAlign = "center"; ctx.textBaseline = "middle"
-        ctx.fillText("N", CX, CY - RH - 60); ctx.fillText("S", CX, CY + RH + 60)
-        ctx.textAlign = "left"; ctx.fillText("W", CX - RH - 60, CY)
-        ctx.textAlign = "right"; ctx.fillText("E", CX + RH + 60, CY)
-
-        // ── Vehicles ────────────────────────────────────────────────────────
+        // ───────────── 🚗 VEHICLES ─────────────
         for (const v of vehicles) {
-            const isNS = v.lane === "north" || v.lane === "south"
-            const isEWExit = v.exitDx !== 0
-            const bodyIsNS = isNS ? !v.crossed || !isEWExit : v.crossed && !isEWExit
-            const vw = bodyIsNS ? 10 : 16
-            const vh = bodyIsNS ? 16 : 10
+            const vw = 12
+            const vh = 18
+
+            ctx.save()
+            ctx.shadowColor = "rgba(0,0,0,0.4)"
+            ctx.shadowBlur = 6
 
             if (v.isAmbulance) {
-                // Draw ambulance: white body with red cross + flashing beacon
                 ctx.fillStyle = "#ffffff"
-                roundRect(ctx, v.x - vw / 2, v.y - vh / 2, vw, vh, 2); ctx.fill()
-                // Red cross
+                roundRect(ctx, v.x - vw / 2, v.y - vh / 2, vw, vh, 3)
+                ctx.fill()
+
                 ctx.fillStyle = "#ef4444"
                 ctx.fillRect(v.x - 1, v.y - vh / 2 + 2, 2, vh - 4)
                 ctx.fillRect(v.x - vw / 2 + 2, v.y - 1, vw - 4, 2)
-                // Flashing beacon on roof
-                if (flashRef.current) {
-                    ctx.save()
-                    ctx.globalAlpha = 0.9
-                    ctx.fillStyle = "#ef4444"
-                    ctx.shadowColor = "#ef4444"
-                    ctx.shadowBlur = 10
-                    ctx.beginPath(); ctx.arc(v.x, v.y - vh / 2 - 3, 3, 0, Math.PI * 2); ctx.fill()
-                    ctx.restore()
-                }
+
+                ctx.shadowColor = "#ef4444"
+                ctx.shadowBlur = 10
+                ctx.beginPath()
+                ctx.arc(v.x, v.y - vh / 2 - 4, 3, 0, Math.PI * 2)
+                ctx.fill()
             } else {
-                // Normal vehicle
-                const isActive = v.lane === active
-                ctx.fillStyle = isActive ? LANE_COLORS[v.lane] : (dark ? "#334155" : "#888780")
-                roundRect(ctx, v.x - vw / 2, v.y - vh / 2, vw, vh, 2); ctx.fill()
-                if (isActive && v.turn !== "straight") {
-                    ctx.font = "bold 7px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"
-                    ctx.fillStyle = "rgba(255,255,255,0.92)"; ctx.fillText(TURN_BADGE[v.turn], v.x, v.y)
-                }
+                const grad = ctx.createLinearGradient(
+                    v.x,
+                    v.y - vh / 2,
+                    v.x,
+                    v.y + vh / 2
+                )
+                grad.addColorStop(0, LANE_COLORS[v.lane])
+                grad.addColorStop(1, "#0f172a")
+
+                ctx.fillStyle =
+                    v.lane === active
+                        ? grad
+                        : "rgba(148,163,184,0.4)"
+
+                roundRect(ctx, v.x - vw / 2, v.y - vh / 2, vw, vh, 3)
+                ctx.fill()
             }
+
+            ctx.restore()
         }
 
-        ctx.restore()
     }, [])
 
     // ── FIX 1: activatePhase defined before the emergency useEffect ───────────
