@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+ultralytics
+opencv-python
+numpy
+python-multipart
+websockets
+pydantic
+pygame
+websocket-client
