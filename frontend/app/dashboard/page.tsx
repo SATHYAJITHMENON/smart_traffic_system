@@ -26,10 +26,18 @@ interface SignalState {
   }
 }
 
+// 🔥 NEW: AI Decision Interface
+interface DecisionData {
+  lane: string
+  green_time: number
+  score: number
+}
+
 export default function Dashboard() {
   const [image, setImage] = useState<File | null>(null)
   const [trafficData, setTrafficData] = useState<LaneData[] | null>(null)
   const [annotatedImage, setAnnotatedImage] = useState<string | null>(null)
+  const [decision, setDecision] = useState<DecisionData | null>(null) // 🔥 NEW
   const [analyzing, setAnalyzing] = useState(false)
   const [emergency, setEmergency] = useState<EmergencyState>({
     active: false,
@@ -38,6 +46,7 @@ export default function Dashboard() {
   })
   const [signalState, setSignalState] = useState<SignalState>({})
 
+  // ── WebSocket (UNCHANGED) ─────────────────────────
   useEffect(() => {
     let ws: WebSocket
     let retryDelay = 1000
@@ -82,7 +91,7 @@ export default function Dashboard() {
     return () => { destroyed = true; ws?.close() }
   }, [])
 
-  // Upload
+  // ── Upload ───────────────────────────────────────
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0]) return
 
@@ -110,13 +119,22 @@ export default function Dashboard() {
 
       setTrafficData(lanesArray)
 
+      // 🔥 NEW: AI Decision Extraction
+      if (res.data.lanes && res.data.lanes.length > 0) {
+        const best = res.data.lanes[0]
+        setDecision({
+          lane: best.lane,
+          green_time: best.green_time,
+          score: best.priority_score ?? 0
+        })
+      }
+
     } catch (err) {
       console.error(err)
     } finally {
       setAnalyzing(false)
     }
   }
-
   // 🔥 TOTAL VEHICLES
   const totalVehicles = trafficData
     ? trafficData.reduce(
@@ -126,7 +144,7 @@ export default function Dashboard() {
     )
     : 0
 
-  // 🔥 VEHICLE TYPE TOTALS
+  // 🔥 TYPE TOTALS
   const totals = trafficData
     ? trafficData.reduce(
       (acc, lane) => ({
@@ -148,14 +166,10 @@ export default function Dashboard() {
         <div className="lg:col-span-1 glass rounded-2xl p-6">
           <h2 className="text-xl font-bold mb-4">Traffic Camera AI</h2>
 
-          <label className="block w-full cursor-pointer border-2 border-dashed border-slate-600 p-8 text-center">
+          <label className="block border-2 border-dashed p-8 text-center cursor-pointer">
             <span>{analyzing ? 'Analyzing...' : 'Upload Camera Image'}</span>
-            <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+            <input type="file" hidden accept="image/*" onChange={handleImageUpload} />
           </label>
-
-          {image && (
-            <p className="text-xs mt-2 text-slate-400">{image.name}</p>
-          )}
 
           {annotatedImage && (
             <img
@@ -176,53 +190,65 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-
       </div>
+
+      {/* 🔥 AI DECISION PANEL */}
+      {decision && (
+        <div className="glass rounded-2xl p-6 border border-emerald-500/30">
+          <h2 className="text-xl font-bold mb-4 text-emerald-400">
+            AI Signal Decision
+          </h2>
+
+          <div className="grid grid-cols-3 gap-4 text-center">
+            <div>
+              <p className="text-sm text-slate-400">Lane</p>
+              <p className="text-2xl font-bold capitalize">{decision.lane}</p>
+            </div>
+            <div>
+              <p className="text-sm text-slate-400">Green Time</p>
+              <p className="text-2xl text-emerald-400 font-bold">
+                {decision.green_time}s
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-slate-400">Score</p>
+              <p className="text-2xl text-blue-400 font-bold">
+                {decision.score.toFixed(2)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SUMMARY */}
       {trafficData && (
         <div className="glass rounded-2xl p-6">
           <h2 className="text-xl font-bold mb-4">Vehicle Summary</h2>
 
-          {/* Total */}
           <div className="text-3xl font-bold text-emerald-400 mb-6">
             Total Vehicles: {totalVehicles}
           </div>
 
-          {/* Type counts */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-slate-800 p-4 rounded-xl text-center">
-              Cars: {totals.cars}
-            </div>
-            <div className="bg-slate-800 p-4 rounded-xl text-center">
-              Bikes: {totals.bikes}
-            </div>
-            <div className="bg-slate-800 p-4 rounded-xl text-center">
-              Trucks: {totals.trucks}
-            </div>
-            <div className="bg-slate-800 p-4 rounded-xl text-center">
-              Buses: {totals.buses}
-            </div>
+            <div>Cars: {totals.cars}</div>
+            <div>Bikes: {totals.bikes}</div>
+            <div>Trucks: {totals.trucks}</div>
+            <div>Buses: {totals.buses}</div>
           </div>
 
-          {/* Lane counts */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {trafficData.map((lane) => {
               const total = lane.cars + lane.bikes + lane.trucks + lane.buses
               return (
-                <div key={lane.lane} className="bg-slate-800 p-4 rounded-xl text-center">
-                  <div className="capitalize text-emerald-400 font-bold">
-                    {lane.lane}
-                  </div>
-                  <div className="text-2xl font-bold">{total}</div>
+                <div key={lane.lane} className="bg-slate-800 p-4 rounded text-center">
+                  <div className="capitalize">{lane.lane}</div>
+                  <div className="text-xl font-bold">{total}</div>
                 </div>
               )
             })}
           </div>
-
         </div>
       )}
-
     </div>
   )
 }
