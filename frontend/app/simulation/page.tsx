@@ -24,8 +24,22 @@ export default function Simulation() {
   const [emergencyLane, setEmergencyLane] = useState<"north" | "south" | "east" | "west" | null>(null)
   const [emergencySeconds, setEmergencySeconds] = useState(0)
   const [simComplete, setSimComplete] = useState(false)
+  const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "disconnected">("connecting")
+  const [lastUpdateAt, setLastUpdateAt] = useState<number | null>(null)
+  const [staleData, setStaleData] = useState(false)
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const staleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Mark data as stale if no WS message received for 8 seconds while connected
+  useEffect(() => {
+    staleTimerRef.current = setInterval(() => {
+      if (lastUpdateAt !== null && wsStatus === "connected") {
+        setStaleData(Date.now() - lastUpdateAt > 8000)
+      }
+    }, 1000)
+    return () => { if (staleTimerRef.current) clearInterval(staleTimerRef.current) }
+  }, [lastUpdateAt, wsStatus])
 
   useEffect(() => {
     let ws: WebSocket | null = null
@@ -34,9 +48,19 @@ export default function Simulation() {
 
     const connect = () => {
       if (destroyed) return
+      setWsStatus("connecting")
       ws = new WebSocket("ws://localhost:8000/ws")
+
+      ws.onopen = () => {
+        setWsStatus("connected")
+        setStaleData(false)
+        retryDelay = 1000
+      }
+
       ws.onmessage = (e) => {
         try {
+          setLastUpdateAt(Date.now())
+          setStaleData(false)
           const msg = JSON.parse(e.data)
           if (msg.type === "EMERGENCY_OVERRIDE") {
             setEmergencyLane(msg.lane)
@@ -56,7 +80,13 @@ export default function Simulation() {
           }
         } catch { }
       }
-      ws.onclose = () => { if (!destroyed) { setTimeout(connect, retryDelay); retryDelay = Math.min(retryDelay * 2, 30000) } }
+      ws.onclose = () => {
+        if (!destroyed) {
+          setWsStatus("disconnected")
+          setTimeout(connect, retryDelay)
+          retryDelay = Math.min(retryDelay * 2, 30000)
+        }
+      }
       ws.onerror = () => ws?.close()
     }
 
@@ -65,6 +95,7 @@ export default function Simulation() {
       destroyed = true
       ws?.close()
       if (timerRef.current) clearInterval(timerRef.current)
+      if (staleTimerRef.current) clearInterval(staleTimerRef.current)
     }
   }, [])
 
@@ -103,14 +134,51 @@ export default function Simulation() {
 
         <div style={S.topCenter}>
           <TrafficLights activeLane={emergencyLane ?? activeLane} />
-          <div style={S.statusChip}>
-            {cycle.length === 0
-              ? <span style={S.statusIdle}>● Idle</span>
-              : simComplete
-                ? <span style={S.statusDone}>✓ Cleared</span>
-                : <><span style={S.pulseDot} /><span style={S.statusRun}>Running</span></>
-            }
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={S.statusChip}>
+              {cycle.length === 0
+                ? <span style={S.statusIdle}>● Idle</span>
+                : simComplete
+                  ? <span style={S.statusDone}>✓ Cleared</span>
+                  : <><span style={S.pulseDot} /><span style={S.statusRun}>Running</span></>
+              }
+            </div>
+            {/* WebSocket status indicator */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 4,
+              fontSize: 10, fontWeight: 600, padding: "2px 8px",
+              borderRadius: 20, border: "1px solid",
+              ...(wsStatus === "connected" && !staleData
+                ? { color: "#4ade80", borderColor: "rgba(74,222,128,0.25)", background: "rgba(74,222,128,0.07)" }
+                : wsStatus === "connected" && staleData
+                  ? { color: "#f59e0b", borderColor: "rgba(245,158,11,0.25)", background: "rgba(245,158,11,0.07)" }
+                  : { color: "#f87171", borderColor: "rgba(248,113,113,0.25)", background: "rgba(248,113,113,0.07)" }
+              ),
+            }}>
+              <span style={{
+                width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
+                background: wsStatus === "connected" && !staleData ? "#4ade80"
+                  : wsStatus === "connected" && staleData ? "#f59e0b" : "#f87171",
+              }} />
+              {wsStatus === "connected" && !staleData && "Live"}
+              {wsStatus === "connected" && staleData && "Stale"}
+              {wsStatus === "connecting" && "Connecting…"}
+              {wsStatus === "disconnected" && "Reconnecting…"}
+            </div>
           </div>
+          {/* Stale / disconnected banner */}
+          {(staleData || wsStatus === "disconnected") && (
+            <div style={{
+              fontSize: 10, color: wsStatus === "disconnected" ? "#fca5a5" : "#fcd34d",
+              background: wsStatus === "disconnected" ? "rgba(248,113,113,0.08)" : "rgba(252,211,77,0.08)",
+              border: `1px solid ${wsStatus === "disconnected" ? "rgba(248,113,113,0.2)" : "rgba(252,211,77,0.2)"}`,
+              borderRadius: 6, padding: "2px 10px", marginTop: 2, textAlign: "center",
+            }}>
+              {wsStatus === "disconnected"
+                ? "⚠ Backend disconnected — reconnecting…"
+                : "⚠ No updates received — data may be stale"}
+            </div>
+          )}
         </div>
 
         <div style={S.emgPanel}>
