@@ -331,7 +331,27 @@ export default function VehicleSimulation({ cycle, emergencyLane = null, onSimul
             ctx.fillStyle = l.lane === active ? "#22c55e" : "#ef4444"
             ctx.fill()
         })
+        // ───────────── 🧭 ROAD DIRECTION LABELS ─────────────
+        ctx.save()
+        ctx.font = "bold 13px sans-serif"
+        ctx.fillStyle = "#e2e8f0"
+        ctx.shadowColor = "rgba(0,0,0,0.6)"
+        ctx.shadowBlur = 4
+        ctx.textAlign = "center"
 
+        // NORTH
+        ctx.fillText("↑ NORTH", CX, CY - RH - 30)
+
+        // SOUTH
+        ctx.fillText("↓ SOUTH", CX, CY + RH + 35)
+
+        // EAST
+        ctx.fillText("→ EAST", CX + RH + 50, CY + 5)
+
+        // WEST
+        ctx.fillText("← WEST", CX - RH - 50, CY + 5)
+
+        ctx.restore()
         // ───────────── 🚗 VEHICLES ─────────────
         for (const v of vehicles) {
             const vw = 12
