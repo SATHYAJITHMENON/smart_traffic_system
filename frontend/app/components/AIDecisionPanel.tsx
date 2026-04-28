@@ -101,6 +101,93 @@ function FormulaTooltip({ qw, ww }: { qw: number; ww: number }) {
   )
 }
 
+// ── AI Reasoning Summary ───────────────────────────────────────────────────────
+
+function ReasoningSummary({ decisionData, mode }: { decisionData: DecisionLane[]; mode: string }) {
+  const isAdaptive = mode === "adaptive"
+  const winner = decisionData[0]
+  const others = decisionData.slice(1)
+
+  // Estimate time saved vs legacy (vehicles × 3s for the winner lane)
+  const legacyGreenTime = Math.min(60, Math.max(10, winner.vehicle_count * 3))
+  const adaptiveGreenTime = winner.green_time
+  const timeDiff = adaptiveGreenTime - legacyGreenTime
+
+  // Build a human-readable reason sentence
+  function buildReason(): string {
+    if (!isAdaptive) {
+      return `Legacy mode assigns green time based purely on vehicle count (${winner.vehicle_count} vehicles × 3 s = ${legacyGreenTime} s). No queue or wait data is considered.`
+    }
+
+    const reasons: string[] = []
+
+    if (winner.queue_length > 0) {
+      const queueContrib = (winner.queue_length * 2.5).toFixed(1)
+      reasons.push(`queue of ${winner.queue_length} vehicles (+${queueContrib} pts)`)
+    }
+    if (winner.avg_wait_time > 0) {
+      const waitContrib = (winner.avg_wait_time * 0.4).toFixed(1)
+      reasons.push(`avg wait of ${winner.avg_wait_time.toFixed(0)} s (+${waitContrib} pts)`)
+    }
+    if (winner.vehicle_count > 0) {
+      reasons.push(`${winner.vehicle_count} vehicles detected`)
+    }
+
+    const secondBest = others[0]
+    const margin = secondBest
+      ? ` It scored ${((winner.raw_score ?? 0) - (secondBest.raw_score ?? 0)).toFixed(1)} pts ahead of ${secondBest.lane}.`
+      : ""
+
+    const base = reasons.length > 0
+      ? `The AI selected ${winner.lane.toUpperCase()} due to its ${reasons.join(" and ")}.`
+      : `The AI selected ${winner.lane.toUpperCase()} as the highest-priority lane.`
+
+    return base + margin
+  }
+
+  function buildTimeSavedLine(): string | null {
+    if (!isAdaptive) return null
+    if (timeDiff === 0) return `Green time matches what legacy mode would assign (${adaptiveGreenTime} s).`
+    if (timeDiff > 0) {
+      return `⏱ +${timeDiff} s longer than legacy — clearing the backlog faster (${legacyGreenTime} s → ${adaptiveGreenTime} s).`
+    }
+    // timeDiff < 0: adaptive gave less time than legacy would have
+    return `⏱ ${Math.abs(timeDiff)} s shorter than legacy — other lanes need service more urgently (${legacyGreenTime} s → ${adaptiveGreenTime} s).`
+  }
+
+  const timeSavedLine = buildTimeSavedLine()
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: 0.15 }}
+      style={{
+        background: "rgba(96,165,250,0.05)",
+        border: "1px solid rgba(96,165,250,0.15)",
+        borderRadius: 10,
+        padding: "10px 14px",
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#60a5fa", marginBottom: 4, letterSpacing: "0.05em" }}>
+        💬 AI REASONING
+      </div>
+      <p style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.65, margin: 0 }}>
+        {buildReason()}
+      </p>
+      {timeSavedLine && (
+        <p style={{
+          fontSize: 11, color: "#4ade80", lineHeight: 1.5, margin: "6px 0 0",
+          fontWeight: 600,
+        }}>
+          {timeSavedLine}
+        </p>
+      )}
+    </motion.div>
+  )
+}
+
 // ── Inner content (reused whether embedded or standalone) ─────────────────────
 
 function PanelContent({
@@ -174,6 +261,9 @@ function PanelContent({
           </div>
         )}
       </motion.div>
+
+      {/* ── AI Reasoning Summary ── */}
+      <ReasoningSummary decisionData={decisionData} mode={mode} />
 
       {/* ── Per-lane breakdown ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
