@@ -1,0 +1,10 @@
+names:
+- car
+- bike
+- bus
+- truck
+- rickshaw
+nc: 5
+path: D:\project\traffic-ai\backend\VisDrone
+train: VisDrone2019-DET-train/images
+val: VisDrone2019-DET-val/images

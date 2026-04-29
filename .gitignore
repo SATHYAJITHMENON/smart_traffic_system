@@ -88,3 +88,8 @@ models/
 .cache/
 temp/
 tmp/
+# =========================
+# 📦 Datasets (VisDrone)
+# =========================
+
+VisDrone/
