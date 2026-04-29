@@ -10,10 +10,11 @@ logger = logging.getLogger(__name__)
 # ── After fine-tuning, point this to your best.pt ────────────────────────────
 # Before training: keep "yolov8l.pt"
 # After training:  set to full path e.g. "visdrone_finetune/runs/finetune/weights/best.pt"
-FINETUNED_WEIGHTS = "yolov8m.pt"
+FINETUNED_WEIGHTS = "D:/project/traffic-ai/backend/runs/visdrone_finetune/weights/best.pt"
+
 
 # Image size
-IMG_SIZE = 640
+IMG_SIZE = 416
 
 # ── Confidence ────────────────────────────────────────────────────────────────
 CONF_THRESHOLD = 0.45
@@ -32,7 +33,7 @@ ASPECT_LIMITS = {
 
 # ── Flip to True once you have run finetune_visdrone.py ──────────────────────
 # False = base COCO model (yolov8l.pt), True = your fine-tuned weights
-USING_FINETUNED = False
+USING_FINETUNED = True
 
 # COCO base model
 COCO_VEHICLE_CLASSES = {"car", "motorcycle", "bus", "truck"}
