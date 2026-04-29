@@ -93,3 +93,5 @@ tmp/
 # =========================
 
 VisDrone/
+
+backend/runs/
